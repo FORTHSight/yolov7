@@ -20,7 +20,6 @@ import yaml
 
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness
-from utils.torch_utils import init_torch_seeds
 
 # Settings
 torch.set_printoptions(linewidth=320, precision=5, profile='long')
@@ -36,12 +35,26 @@ def set_logging(rank=-1):
         level=logging.INFO if rank in [-1, 0] else logging.WARN)
 
 
-def init_seeds(seed=0):
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+def init_seeds(seed=0, deterministic=False):
     # Initialize random number generator (RNG) seeds
+    cv2.setRNGSeed(seed)
     random.seed(seed)
     np.random.seed(seed)
-    init_torch_seeds(seed)
+    # Speed-reproducibility tradeoff https://pytorch.org/docs/stable/notes/randomness.html
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
+    import torch.backends.cudnn as cudnn
+    if deterministic:  # slower, more reproducible
+        torch.use_deterministic_algorithms(True)
+        cudnn.benchmark, cudnn.deterministic = False, True
+    else:  # faster, less reproducible
+        cudnn.benchmark, cudnn.deterministic = True, False
 
 def get_latest_run(search_dir='.'):
     # Return path to most recent 'last.pt' in /runs (i.e. to --resume from)
