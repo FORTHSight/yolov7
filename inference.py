@@ -6,25 +6,73 @@ Code adapted from the detect.py script in the yolov5 repository.
 import argparse
 import time
 from pathlib import Path
-
+import logging
 import cv2
 import torch
 import torch.backends.cudnn as cudnn
 from numpy import random
+import PIL
+import os
 
 from models.experimental import attempt_load
-from utils.datasets import LoadStreams, LoadImages
+from utils.datasets import letterbox
 from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, \
     scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path
 from utils.plots import plot_one_box
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
+import numpy as np
 
+
+LOGGER = logging.getLogger(__name__)
+
+def frameIteratorFromVideo(video_path):
+    cap = cv2.VideoCapture(video_path)
+    while(cap.isOpened()):
+        ret, frame = cap.read()
+        if ret == False:
+            break
+        yield frame, video_path
+    cap.release()
+
+def frameIteratorFromFolder(folder_path):
+    import glob
+    for f in sorted(glob.glob(os.path.join(folder_path, "*"))):
+        yield cv2.imread(f), f
+
+def frameIteratorFromImage(image_path):
+    yield cv2.imread(image_path), image_path
+
+def frameIteratorFromStream(stream_path):
+    cap = cv2.VideoCapture(stream_path)
+    # drop frames in buffer
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    
+    while(cap.isOpened()):
+        ret, frame = cap.read()
+        if ret == False:
+            break
+        yield frame, stream_path
+    cap.release()
+
+def getFrameIterator(data_path):
+    if data_path.startswith("rtsp://"):
+        return frameIteratorFromStream(data_path)
+    if os.path.isdir(data_path):
+        return frameIteratorFromFolder(data_path)
+    elif os.path.isfile(data_path):
+        if data_path.endswith(".mp4"):
+            return frameIteratorFromVideo(data_path)
+        else:
+            return frameIteratorFromImage(data_path)
+    else:
+        raise ValueError("Data path must be a folder or a video file.")
+    
 
 def detect(save_img=False):
     source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
-    save_img = not opt.nosave and not source.endswith('.txt')  # save inference images
-    webcam = source.isnumeric() or source.endswith('.txt') or source.lower().startswith(
-        ('rtsp://', 'rtmp://', 'http://', 'https://'))
+
+    save_img = not opt.nosave  # save inference images
+    webcam = source.isnumeric() or source.lower().startswith(('rtsp://', 'rtmp://', 'http://', 'https://'))
 
     # Directories
     save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
@@ -51,9 +99,8 @@ def detect(save_img=False):
     if webcam:
         view_img = check_imshow()
         cudnn.benchmark = True  # set True to speed up constant image size inference
-        dataset = LoadStreams(source, img_size=imgsz, stride=stride)
-    else:
-        dataset = LoadImages(source, img_size=imgsz, stride=stride)
+
+    dataset = getFrameIterator(source)
 
     # Get names and colors
     names = model.module.names if hasattr(model, 'module') else model.names
@@ -66,7 +113,15 @@ def detect(save_img=False):
     old_img_b = 1
 
     t0 = time.time()
-    for path, img, im0s, vid_cap in dataset:
+    frame_count = 0
+    for im0, path in dataset:
+        # resize and pad image
+        
+        img = letterbox(im0, new_shape=imgsz, stride=stride)[0]
+        # Convert
+        img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+        img = np.ascontiguousarray(img)
+
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -94,14 +149,10 @@ def detect(save_img=False):
         wood_detected = False
         # Process detections
         for i, det in enumerate(pred):  # detections per image
-            if webcam:  # batch_size >= 1
-                p, s, im0, frame = path[i], '%g: ' % i, im0s[i].copy(), dataset.count
-            else:
-                p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
-
-            p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # img.jpg
-            txt_path = str(save_dir / 'labels' / p.stem) + ('' if dataset.mode == 'image' else f'_{frame}')  # img.txt
+            s = ""
+            p = Path(path)  # to Path
+            save_path = str(save_dir / p.name) + f'_{frame_count:06d}.jpg' # img.jpg
+            txt_path = str(save_dir / 'labels' / p.stem) + f'_{frame_count:06d}'  # img.txt
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             if len(det):
                 # Rescale boxes from img_size to im0 size
@@ -130,7 +181,7 @@ def detect(save_img=False):
                             wood_detected = True
                         
             # Print time (inference + NMS)
-            print(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
+            LOGGER.info(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
             # Stream results
             if view_img:
@@ -139,27 +190,14 @@ def detect(save_img=False):
 
             # Save results (image with detections)
             if save_img and wood_detected:
-                if dataset.mode == 'image':
-                    cv2.imwrite(save_path, im0)
-                    print(f" The image with the result is saved in: {save_path}")
-                else:  # 'video' or 'stream'
-                    if vid_path != save_path:  # new video
-                        vid_path = save_path
-                        if isinstance(vid_writer, cv2.VideoWriter):
-                            vid_writer.release()  # release previous video writer
-                        if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        else:  # stream
-                            fps, w, h = 30, im0.shape[1], im0.shape[0]
-                            save_path += '.mp4'
-                        vid_writer = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-                    vid_writer.write(im0)
+                cv2.imwrite(save_path, im0)
+                LOGGER.info(f"Saved Frame to: {save_path}")
 
-    if save_txt or save_img:
-        s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
-        #print(f"Results saved to {save_dir}{s}")
+        frame_count += 1
+
+    # if save_txt or save_img:
+    #     s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
+    #     #print(f"Results saved to {save_dir}{s}")
 
     print(f'Done. ({time.time() - t0:.3f}s)')
 
