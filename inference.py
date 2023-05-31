@@ -121,6 +121,10 @@ def detect(save_img=False):
     frame_count = 0
     for im0, path in dataset:
         loop_start = time.time()
+        
+        if opt.save_src:
+            src_img = im0.copy()
+
         # resize and pad image
         
         img = letterbox(im0, new_shape=imgsz, stride=stride)[0]
@@ -159,9 +163,6 @@ def detect(save_img=False):
             p = Path(path)  # to Path
             save_path = str(save_dir / p.name) + f'_{frame_count:010d}.jpg' # img.jpg
             txt_path = str(save_dir / 'labels' / p.stem) + f'_{frame_count:010d}'  # img.txt
-            if opt.save_src:
-                src_path = str(save_dir / "src" / p.name) + f'_{frame_count:010d}.jpg' # img.jpg
-                cv2.imwrite(src_path, im0)
 
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             if len(det):
@@ -203,7 +204,12 @@ def detect(save_img=False):
             # Save results (image with detections)
             if save_img and wood_detected:
                 cv2.imwrite(save_path, im0)
+                if opt.save_src:
+                    src_path = str(save_dir / "src" / p.name) + f'_{frame_count:010d}.jpg' # img.jpg
+                    cv2.imwrite(src_path, src_img)
+
                 LOGGER.info(f"Saved Frame to: {save_path}")
+
 
         # Print time (inference + NMS)
         LOGGER.info(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS. Total {1E3*(time.time() - loop_start):.1f}ms')
