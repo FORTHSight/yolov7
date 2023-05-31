@@ -37,7 +37,10 @@ def frameIteratorFromVideo(video_path):
 def frameIteratorFromFolder(folder_path):
     import glob
     for f in sorted(glob.glob(os.path.join(folder_path, "*"))):
-        yield cv2.imread(f), f
+        if f.endswith(".jpg") or f.endswith(".png"):
+            yield cv2.imread(f), f
+        elif f.endswith(".mp4"):
+            yield from frameIteratorFromVideo(f)
 
 def frameIteratorFromImage(image_path):
     yield cv2.imread(image_path), image_path
@@ -77,6 +80,8 @@ def detect(save_img=False):
     # Directories
     save_dir = Path(increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok))  # increment run
     (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+    if opt.save_src:
+        (save_dir / 'src').mkdir(parents=True, exist_ok=True)
 
     # Initialize
     set_logging()
@@ -115,6 +120,7 @@ def detect(save_img=False):
     t0 = time.time()
     frame_count = 0
     for im0, path in dataset:
+        loop_start = time.time()
         # resize and pad image
         
         img = letterbox(im0, new_shape=imgsz, stride=stride)[0]
@@ -151,8 +157,12 @@ def detect(save_img=False):
         for i, det in enumerate(pred):  # detections per image
             s = ""
             p = Path(path)  # to Path
-            save_path = str(save_dir / p.name) + f'_{frame_count:06d}.jpg' # img.jpg
-            txt_path = str(save_dir / 'labels' / p.stem) + f'_{frame_count:06d}'  # img.txt
+            save_path = str(save_dir / p.name) + f'_{frame_count:010d}.jpg' # img.jpg
+            txt_path = str(save_dir / 'labels' / p.stem) + f'_{frame_count:010d}'  # img.txt
+            if opt.save_src:
+                src_path = str(save_dir / "src" / p.name) + f'_{frame_count:010d}.jpg' # img.jpg
+                cv2.imwrite(src_path, im0)
+
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             if len(det):
                 # Rescale boxes from img_size to im0 size
@@ -174,24 +184,30 @@ def detect(save_img=False):
                     if save_img or view_img:  # Add bbox to image
                         name = names[int(cls)]
                         label = f'{name} {conf:.2f}'
+                        s += f"{label} "
                         plot_one_box(xyxy, im0, label=label, color=colors[int(cls)], line_thickness=1)
                     
                         # HACK to store frames with wood for testing
                         if name == "wood":
                             wood_detected = True
                         
-            # Print time (inference + NMS)
-            LOGGER.info(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS')
 
             # Stream results
             if view_img:
-                cv2.imshow(str(p), im0)
-                cv2.waitKey(1)  # 1 millisecond
+                viz = cv2.resize(im0, (960, 540))
+                cv2.imshow(str(p), viz)
+                k = cv2.waitKey(1)  # 1 millisecond
+                if k == ord('q'):
+                    break
 
             # Save results (image with detections)
             if save_img and wood_detected:
                 cv2.imwrite(save_path, im0)
                 LOGGER.info(f"Saved Frame to: {save_path}")
+
+        # Print time (inference + NMS)
+        LOGGER.info(f'{s}Done. ({(1E3 * (t2 - t1)):.1f}ms) Inference, ({(1E3 * (t3 - t2)):.1f}ms) NMS. Total {1E3*(time.time() - loop_start):.1f}ms')
+
 
         frame_count += 1
 
@@ -221,6 +237,7 @@ if __name__ == '__main__':
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
+    parser.add_argument('--save-src', action='store_true', help='Save source images (without detection bounding boxes)')
     opt = parser.parse_args()
     print(opt)
     #check_requirements(exclude=('pycocotools', 'thop'))
