@@ -203,7 +203,7 @@ def detect(save_img=False):
 
             # Save results (image with detections)
             if save_img and wood_detected:
-                cv2.imwrite(save_path, im0)
+                cv2.imwrite(save_path, cv2.resize(img, (0,0), fx=0.5, fy=0.5))
                 if opt.save_src:
                     src_path = str(save_dir / "src" / p.name) + f'_{frame_count:010d}.jpg' # img.jpg
                     cv2.imwrite(src_path, src_img)
