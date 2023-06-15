@@ -20,6 +20,7 @@ import yaml
 
 from utils.google_utils import gsutil_getsize
 from utils.metrics import fitness
+import sys
 
 # Settings
 torch.set_printoptions(linewidth=320, precision=5, profile='long')
@@ -29,11 +30,26 @@ cv2.setNumThreads(0)  # prevent OpenCV from multithreading (incompatible with Py
 os.environ['NUMEXPR_MAX_THREADS'] = str(min(os.cpu_count(), 8))  # NumExpr max threads
 
 
-def set_logging(rank=-1):
+def set_logging(rank=-1, logfile=None):
+    # Initialize logging with timestamp and optionally rank. Logs to file and stdout
+    if logfile != None:
+        handlers=[
+            logging.FileHandler(logfile, mode='a'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    else:
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
     logging.basicConfig(
-        format="%(message)s",
-        level=logging.INFO if rank in [-1, 0] else logging.WARN)
+        format='%(asctime)s.%(msecs)03d %(levelname)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        level=logging.INFO if rank in [-1, 0] else logging.WARN,
+        handlers=handlers
+        )
 
+    
+    
 
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
