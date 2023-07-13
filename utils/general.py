@@ -32,9 +32,11 @@ os.environ['NUMEXPR_MAX_THREADS'] = str(min(os.cpu_count(), 8))  # NumExpr max t
 
 def set_logging(rank=-1, logfile=None):
     # Initialize logging with timestamp and optionally rank. Logs to file and stdout
+    from logging.handlers import TimedRotatingFileHandler
     if logfile != None:
         handlers=[
-            logging.FileHandler(logfile, mode='a'),
+            TimedRotatingFileHandler(logfile, when='W0', backupCount=8),
+            # logging.FileHandler(logfile, mode='a'),
             logging.StreamHandler(sys.stdout)
         ]
     else:
